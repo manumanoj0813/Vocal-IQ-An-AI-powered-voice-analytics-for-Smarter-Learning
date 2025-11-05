@@ -1,7 +1,8 @@
 import axios from 'axios';
 
-// Set base URL for all API requests
-axios.defaults.baseURL = 'http://localhost:8000';
+// Use environment variable for API base URL in prod; fall back to same origin
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || window.location.origin;
+axios.defaults.baseURL = API_BASE_URL;
 axios.defaults.withCredentials = true;
 
 // Add request interceptor

@@ -55,11 +55,12 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 
 # CORS Configuration
-# Explicitly allow frontend origin
-origins = [
-    "http://localhost:5173",  # Vite default dev server
-    "http://localhost:3000",  # Common React dev server
-]
+# Allow configurable frontend origins; defaults to '*'
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
+if allowed_origins_env:
+    origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()]
+else:
+    origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
