@@ -49,9 +49,10 @@ An advanced platform that LEVERAGES artificial intelligence to analyze voice pat
 ### Frontend
 - **Framework:** React + TypeScript
 - **Build Tool:** Vite
-- **Styling:** TailwindCSS, Material-UI
-- **State Management:** React Hooks
-- **Animations:** Custom CSS animations with glassmorphism effects
+- **UI Library:** Chakra UI
+- **State Management:** React Hooks + Context API
+- **Animations:** Framer Motion
+- **Charts:** Recharts
 
 ### Backend
 - **Framework:** Python (FastAPI)
@@ -73,6 +74,18 @@ An advanced platform that LEVERAGES artificial intelligence to analyze voice pat
 - Node.js (v16 or higher)
 - Python (3.8 or higher)
 - MongoDB (running on port 27017)
+
+### Step 0: Install Dependencies
+
+```bash
+# Frontend
+cd frontend
+npm install
+
+# Backend
+cd ../backend
+pip install -r requirements.txt
+```
 
 ### Step 1: Fix Dependencies (IMPORTANT)
 
@@ -515,15 +528,23 @@ Vocal IQ/
 │   ├── main.py                      # FastAPI application
 │   ├── voice_analyzer.py            # Core voice analysis
 │   ├── enhanced_analyzer.py         # AI detection & language detection
-│   ├── database.py                  # MongoDB connection
-│   ├── auth.py                      # Authentication
-│   └── requirements.txt             # Python dependencies
+│   ├── enhanced_analyzer_v2.py      # Next-gen analyzer (experimental)
+│   ├── enhanced_analyzer_backup.py  # Previous analyzer backup
+│   ├── database.py                  # MongoDB connection and queries
+│   ├── models.py                    # Pydantic models / schemas
+│   ├── export_utils.py              # CSV/PDF export helpers
+│   ├── pdf_generator.py             # PDF generation utilities
+│   ├── requirements.txt             # Python dependencies
+│   ├── setup.py                     # Helper script
+│   └── fix_dependencies.bat         # Windows dependency fix script
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx                  # Main application
-│   │   ├── index.css                # Premium CSS styles
+│   │   ├── index.css                # Styles
 │   │   ├── theme.ts                 # Theme configuration
 │   │   └── components/              # React components
+│   │   ├── config/                   # API/axios configuration
+│   │   ├── contexts/                 # Auth/Theme contexts
 │   ├── package.json                 # Node dependencies
 │   └── vite.config.ts               # Vite configuration
 └── README.md                        # This file
@@ -575,20 +596,40 @@ npm run dev
 ## 📝 API Endpoints
 
 ### Authentication
-- `POST /register` - Register new user
-- `POST /login` - User login
-- `POST /logout` - User logout
+- `POST /register` - Register a new user (returns JWT)
+- `POST /login` - Login with username/password (returns JWT)
+- `POST /token` - OAuth2 password flow token endpoint
+- `GET /auth/me` - Get current user
+- `POST /token/refresh` - Refresh access token
+- `POST /auth/forgot-password` - Request password reset link
+- `POST /auth/reset-password` - Reset password with token
+- `POST /auth/request-otp` - Request OTP (login/verify flows)
+- `POST /auth/request-register-otp` - Request OTP for registration
 
 ### Voice Analysis
-- `POST /analyze` - Analyze audio file
-- `GET /analysis/{id}` - Get analysis by ID
-- `GET /history` - Get user's analysis history
+- `POST /test-analyze-audio` - Analyze audio without auth (test only)
+- `POST /analyze-audio` - Analyze audio (authenticated)
+- `POST /api/analyze-audio` - Alias for `/analyze-audio`
+- `POST /analyze-audio-enhanced` - Enhanced analysis with language + AI detection
 
-### Enhanced Features
-- `POST /detect-ai-voice` - AI voice detection
-- `POST /detect-language` - Language detection
-- `GET /export/pdf/{id}` - Export analysis as PDF
-- `GET /export/csv/{id}` - Export analysis as CSV
+### Exports
+- `POST /export-data` - Export history as CSV/PDF (streamed)
+- `GET /export-analysis-pdf/{recording_id}` - Export a specific recording as PDF
+
+### Charts & Debug
+- `GET /comparison-charts` - Comparison chart (text stream placeholder)
+- `GET /language-charts` - Language chart (text stream placeholder)
+- `GET /debug-charts` - Chart generation diagnostics
+- `GET /debug-language-detection` - Language detection diagnostics
+- `GET /debug-ai-detection` - AI detection diagnostics
+- `GET /supported-languages` - List supported languages
+- `GET /test` - Health check
+- `GET /test-db` - Database connectivity check
+
+### Admin
+- `GET /admin/users` - List users (admin)
+- `GET /admin/recordings` - List recent recordings (admin)
+- `GET /admin/metrics/summary` - Usage metrics (admin)
 
 ---
 
@@ -622,7 +663,7 @@ SOFTWARE.
 
 **Version:** 2.0 Advanced  
 **Status:** ✅ Production Ready  
-**Last Updated:** October 2025  
+**Last Updated:** November 2025  
 **Accuracy:** 85-95% (AI Detection), 80-90% (Language Detection)  
 **UI Quality:** Premium Grade  
 **Performance:** Optimized (5-8s processing)
@@ -630,3 +671,16 @@ SOFTWARE.
 ---
 
 **Built with ❤️ for better voice analysis and learning**
+
+---
+
+## 🧾 Changelog
+
+### 2025-11
+- Migrated frontend styling to Chakra UI; added Framer Motion and Recharts
+- Added export endpoints for CSV/PDF and PDF generation utilities
+- Introduced enhanced analysis endpoint combining language + AI detection
+- Implemented OTP, password reset flows, and token refresh
+- Added admin endpoints for users, recordings, and metrics
+- Added diagnostics endpoints for AI and language detection, and chart generation
+- Updated project structure and setup instructions; added dependency fix script for Windows

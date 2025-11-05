@@ -169,6 +169,7 @@ export interface User {
   email: string;
   created_at: string;
   preferred_language?: string;
+  is_admin?: boolean;
 }
 
 export interface PracticeSession {

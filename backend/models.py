@@ -28,6 +28,7 @@ class UserDB(BaseModel):
     username: str
     email: str
     hashed_password: str
+    is_admin: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     preferred_language: str = Field(default="en")
 

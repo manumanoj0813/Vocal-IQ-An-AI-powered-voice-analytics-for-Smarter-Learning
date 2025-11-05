@@ -20,6 +20,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   sessionType = 'practice', 
   topic = 'general' 
 }) => {
+  const MAX_DURATION_SEC = 900 // 15 minutes
   const [isRecording, setIsRecording] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
@@ -30,9 +31,14 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
+  const waveformCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const animationRef = useRef<number | null>(null)
   const toast = useToast()
   const [lastAudioBlob, setLastAudioBlob] = useState<Blob | null>(null)
   const [lastAudioUrl, setLastAudioUrl] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [uploadedBlob, setUploadedBlob] = useState<Blob | null>(null)
+  const [isReadyToAnalyze, setIsReadyToAnalyze] = useState(false)
 
   const bgColor = useColorModeValue('white', 'gray.800')
   const borderColor = useColorModeValue('gray.200', 'gray.600')
@@ -68,7 +74,10 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     audioContextRef.current = new AudioContext()
     analyserRef.current = audioContextRef.current.createAnalyser()
     const source = audioContextRef.current.createMediaStreamSource(stream)
-    source.connect(analyserRef.current)
+    const gainNode = audioContextRef.current.createGain()
+    gainNode.gain.value = 1.0
+    source.connect(gainNode)
+    gainNode.connect(analyserRef.current)
     analyserRef.current.fftSize = 256
 
     const levelInterval = setInterval(() => {
@@ -80,16 +89,72 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
       }
     }, 100)
 
+    // waveform drawing
+    const drawWaveform = () => {
+      if (!analyserRef.current || !waveformCanvasRef.current) {
+        animationRef.current = requestAnimationFrame(drawWaveform)
+        return
+      }
+      const canvas = waveformCanvasRef.current
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      const bufferLength = analyserRef.current.fftSize
+      const dataArray = new Uint8Array(bufferLength)
+      analyserRef.current.getByteTimeDomainData(dataArray)
+
+      ctx.fillStyle = '#edf2f7'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.lineWidth = 2
+      ctx.strokeStyle = '#805AD5'
+      ctx.beginPath()
+      const sliceWidth = canvas.width / bufferLength
+      let x = 0
+      for (let i = 0; i < bufferLength; i++) {
+        const v = dataArray[i] / 128.0
+        const y = (v * canvas.height) / 2
+        if (i === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
+        x += sliceWidth
+      }
+      ctx.lineTo(canvas.width, canvas.height / 2)
+      ctx.stroke()
+
+      animationRef.current = requestAnimationFrame(drawWaveform)
+    }
+
+    animationRef.current = requestAnimationFrame(drawWaveform)
+
     return levelInterval
   }
 
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      })
       mediaRecorderRef.current = new MediaRecorder(stream, { mimeType })
       chunksRef.current = []
 
       const levelInterval = setupAudioAnalyser(stream)
+
+      // silence auto-stop
+      let belowThresholdCount = 0
+      const silenceCheck = setInterval(() => {
+        if (!analyserRef.current) return
+        const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount)
+        analyserRef.current.getByteFrequencyData(dataArray)
+        const avg = dataArray.reduce((a, b) => a + b) / dataArray.length
+        if (avg < 5) belowThresholdCount++
+        else belowThresholdCount = 0
+        if (belowThresholdCount >= 30) { // ~3 seconds
+          clearInterval(silenceCheck)
+          stopRecording()
+        }
+      }, 100)
 
       mediaRecorderRef.current.ondataavailable = (e) => {
         if (e.data.size > 0) {
@@ -100,6 +165,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
       mediaRecorderRef.current.onstop = async () => {
         stream.getTracks().forEach(track => track.stop())
         clearInterval(levelInterval)
+        if (animationRef.current) cancelAnimationFrame(animationRef.current)
         try {
           setIsProcessing(true)
           const audioBlob = new Blob(chunksRef.current, { type: mimeType })
@@ -208,6 +274,50 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     }
   }
 
+  const handleUploadClick = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      setIsProcessing(false)
+      setUploadedBlob(file)
+      setLastAudioBlob(file)
+      if (lastAudioUrl) {
+        URL.revokeObjectURL(lastAudioUrl)
+      }
+      setLastAudioUrl(URL.createObjectURL(file))
+      setIsReadyToAnalyze(true)
+      toast({
+        title: 'File ready',
+        description: 'Click Analyze Audio to run the analysis.',
+        status: 'info',
+        duration: 3000,
+        isClosable: true,
+      })
+    } catch (error) {
+      const toastOptions = handleApiError(error)
+      toast(toastOptions)
+    } finally {
+      // reset input to allow re-uploading same file name
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const analyzeUploadedAudio = async () => {
+    if (!uploadedBlob) return
+    try {
+      setIsProcessing(true)
+      await sendAudioForAnalysis(uploadedBlob)
+    } finally {
+      setIsProcessing(false)
+      setIsReadyToAnalyze(false)
+      setUploadedBlob(null)
+    }
+  }
+
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60)
     const secs = seconds % 60
@@ -278,27 +388,43 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
                     Stop Recording
                   </Button>
                 ) : (
-                  <Button
-                    colorScheme="blue"
-                    leftIcon={<Icon as={FaMicrophone} />}
-                    onClick={startRecording}
-                    isDisabled={hasPermission === false}
-                    size="lg"
-                    borderRadius="full"
-                    px={8}
-                    py={6}
-                    boxShadow="lg"
-                    _hover={{
-                      transform: 'scale(1.05)',
-                      boxShadow: 'xl',
-                    }}
-                    _active={{
-                      transform: 'scale(0.95)',
-                    }}
-                    transition="all 0.2s"
-                  >
-                    Start Recording
-                  </Button>
+                  <HStack spacing={4} justify="center">
+                    <Button
+                      colorScheme="blue"
+                      leftIcon={<Icon as={FaMicrophone} />}
+                      onClick={startRecording}
+                      isDisabled={hasPermission === false}
+                      size="lg"
+                      borderRadius="full"
+                      px={8}
+                      py={6}
+                      boxShadow="lg"
+                      _hover={{
+                        transform: 'scale(1.05)',
+                        boxShadow: 'xl',
+                      }}
+                      _active={{
+                        transform: 'scale(0.95)',
+                      }}
+                      transition="all 0.2s"
+                    >
+                      Start Recording
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={handleUploadClick}
+                      isLoading={isProcessing}
+                    >
+                      Upload Audio
+                    </Button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="audio/*,video/webm"
+                      style={{ display: 'none' }}
+                      onChange={handleFileSelected}
+                    />
+                  </HStack>
                 )}
               </Box>
 
@@ -309,11 +435,11 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
                       {formatTime(recordingTime)}
                     </Text>
                     <Text fontSize="sm" color="gray.500">
-                      Max: 5:00
+                      Max: 15:00
                     </Text>
                   </HStack>
                   <Progress 
-                    value={(recordingTime / 300) * 100} 
+                    value={(recordingTime / MAX_DURATION_SEC) * 100} 
                     size="sm" 
                     colorScheme="blue" 
                     borderRadius="full"
@@ -326,6 +452,9 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
                     borderRadius="full"
                     transition="width 0.1s"
                   />
+                <Box mt={4}>
+                  <canvas ref={waveformCanvasRef} width={360} height={80} style={{ width: '100%', borderRadius: 8, background: '#edf2f7' }} />
+                </Box>
                 </Box>
               )}
 
@@ -347,6 +476,16 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
                     >
                       Download
                     </Button>
+                    {isReadyToAnalyze && (
+                      <Button 
+                        colorScheme="purple"
+                        size="sm"
+                        onClick={analyzeUploadedAudio}
+                        isLoading={isProcessing}
+                      >
+                        Analyze Audio
+                      </Button>
+                    )}
                   </HStack>
                 </Box>
               )}

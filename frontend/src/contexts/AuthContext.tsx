@@ -224,7 +224,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       
       // Fall back to direct login if OAuth2 fails
-      const response = await api.post<{ access_token: string }>('/auth/login', {
+      const response = await api.post<{ access_token: string }>('/login', {
         username: credentials.username,
         password: credentials.password
       });

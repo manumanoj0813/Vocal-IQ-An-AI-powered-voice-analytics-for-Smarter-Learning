@@ -14,6 +14,9 @@ from bson import ObjectId
 from pydantic import BaseModel, Field
 import logging
 import io
+import random
+import smtplib
+from email.mime.text import MIMEText
 
 from voice_analyzer import VoiceAnalyzer
 from enhanced_analyzer import EnhancedAnalyzer
@@ -24,12 +27,20 @@ from database import (
     create_user,
     get_user_by_username,
     get_user_by_email,
+    get_user_by_username_or_email,
     create_recording,
     get_user_recordings,
     create_practice_session,
     get_user_practice_sessions,
     update_progress_metrics,
-    get_user_progress
+    get_user_progress,
+    list_users,
+    list_recent_recordings,
+    get_usage_metrics,
+    set_user_otp,
+    clear_user_otp,
+    set_password_reset_token,
+    reset_password_with_token
 )
 from models import (
     UserDB, RecordingDB, PracticeSessionDB, ProgressMetricsDB,
@@ -43,12 +54,11 @@ logger = logging.getLogger(__name__)
 # FastAPI App
 app = FastAPI()
 
-# CORS
+# CORS Configuration
+# Explicitly allow frontend origin
 origins = [
-    "http://localhost:5173",  # Vite dev server
-    "http://localhost:3000",  # Keep existing React dev server
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:3000"
+    "http://localhost:5173",  # Vite default dev server
+    "http://localhost:3000",  # Common React dev server
 ]
 
 app.add_middleware(
@@ -59,6 +69,11 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Content-Disposition", "Authorization"],
 )
+
+# Add OPTIONS handler for CORS preflight
+@app.options("/{full_path:path}")
+async def options_handler(full_path: str):
+    return {"message": "CORS preflight"}
 
 # JWT Setup
 SECRET_KEY = os.getenv("SECRET_KEY", "your-super-secret-key")
@@ -75,6 +90,8 @@ class UserCreate(BaseModel):
     username: str
     email: str
     password: str
+    is_admin: Optional[bool] = False
+    otp: Optional[str] = None
 
 class Token(BaseModel):
     access_token: str
@@ -82,6 +99,20 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class OTPRequest(BaseModel):
+    identifier: str  # username or email
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
 
 # Auth Helpers
 def verify_password(plain_password, hashed_password):
@@ -95,6 +126,38 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def send_email(to_email: str, subject: str, body: str):
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_pass = os.getenv("SMTP_PASS")
+    from_email = os.getenv("FROM_EMAIL", smtp_user or "no-reply@vocal-iq.local")
+
+    if not smtp_host or not smtp_user or not smtp_pass:
+        logger.warning(f"SMTP not configured. Would send to {to_email}: {subject} - {body}")
+        return
+
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = from_email
+    msg["To"] = to_email
+
+    try:
+        if smtp_port == 465:
+            with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
+                server.login(smtp_user, smtp_pass)
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+                server.login(smtp_user, smtp_pass)
+                server.send_message(msg)
+        logger.info(f"Email sent to {to_email} via {smtp_host}:{smtp_port}")
+    except Exception as e:
+        logger.error(f"SMTP send failed to {to_email}: {e}")
 
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     credentials_exception = HTTPException(
@@ -126,15 +189,119 @@ async def startup_event():
 async def register_user_endpoint(user: UserCreate):
     if await get_user_by_username(user.username):
         raise HTTPException(status_code=400, detail="Username already registered")
-    if await get_user_by_email(user.email):
-        raise HTTPException(status_code=400, detail="Email already registered")
+    # Email can be reused across accounts; only username must be unique
+    # OTP is no longer required for registration
 
     hashed_password = get_password_hash(user.password)
-    user_db = UserDB(username=user.username, email=user.email, hashed_password=hashed_password)
+    user_db = UserDB(username=user.username, email=user.email, hashed_password=hashed_password, is_admin=bool(user.is_admin))
     await create_user(user_db)
 
     access_token = create_access_token(data={"sub": user.username}, expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     return {"access_token": access_token, "token_type": "bearer"}
+
+# Compatibility routes for frontend expectations
+@app.post("/auth/register", response_model=Token)
+async def auth_register(user: UserCreate):
+    return await register_user_endpoint(user)
+
+@app.get("/auth/me", response_model=UserDB)
+async def auth_me(current_user: dict = Depends(get_current_user)):
+    return current_user
+
+@app.post("/token/refresh")
+async def token_refresh(current_user: dict = Depends(get_current_user)):
+    # If the provided token is valid, issue a fresh token
+    access_token = create_access_token(data={"sub": current_user["username"]}, expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/auth/request-otp")
+async def request_otp(payload: OTPRequest):
+    user = await get_user_by_username_or_email(payload.identifier)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    code = f"{random.randint(100000, 999999)}"
+    expires_at = datetime.utcnow() + timedelta(minutes=10)
+    await set_user_otp(payload.identifier, code, expires_at)
+    try:
+        to_email = user.get("email")
+        logger.info(f"Issuing OTP for {user.get('username')} to {to_email}: {code}")
+        send_email(to_email, "Your Vocal IQ OTP", f"Your OTP is {code}. It expires in 10 minutes.")
+    except Exception as e:
+        logger.warning(f"Failed to send OTP email: {e}")
+    return {"message": "OTP sent if user exists"}
+
+@app.post("/auth/request-register-otp")
+async def request_register_otp(req: ForgotPasswordRequest):
+    # Allow sending registration OTP even if email already exists
+    code = f"{random.randint(100000, 999999)}"
+    expires_at = datetime.utcnow() + timedelta(minutes=10)
+    from database import set_registration_otp
+    await set_registration_otp(req.email, code, expires_at)
+    try:
+        send_email(req.email, "Your Vocal IQ Registration OTP", f"Your OTP is {code}. It expires in 10 minutes.")
+        logger.info(f"Registration OTP for {req.email}: {code}")
+    except Exception as e:
+        logger.warning(f"Failed to send registration OTP: {e}")
+    return {"message": "Registration OTP sent if email is valid"}
+
+@app.post("/login", response_model=Token)
+async def login_with_otp(payload: LoginRequest):
+    user = await get_user_by_username(payload.username)
+    if not user or not verify_password(payload.password, user["hashed_password"]):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect username or password")
+
+    # OTP validation removed; proceed with username/password only
+    access_token = create_access_token(data={"sub": payload.username}, expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/auth/forgot-password")
+async def forgot_password(req: ForgotPasswordRequest):
+    user = await get_user_by_email(req.email)
+    if not user:
+        return {"message": "If the email exists, a reset link has been sent"}
+    token = jwt.encode({"sub": user["username"], "purpose": "reset", "exp": datetime.utcnow() + timedelta(minutes=30)}, SECRET_KEY, algorithm=ALGORITHM)
+    await set_password_reset_token(req.email, token, datetime.utcnow() + timedelta(minutes=30))
+    try:
+        reset_url = os.getenv("RESET_URL_BASE", "http://localhost:5173") + f"/reset?token={token}"
+        send_email(req.email, "Reset your Vocal IQ password", f"Use this token to reset your password: {token}\nOr open: {reset_url}")
+    except Exception as e:
+        logger.warning(f"Failed to send reset email: {e}")
+    return {"message": "If the email exists, a reset link has been sent"}
+
+@app.post("/auth/reset-password")
+async def reset_password(req: ResetPasswordRequest):
+    try:
+        decoded = jwt.decode(req.token, SECRET_KEY, algorithms=[ALGORITHM])
+        if decoded.get("purpose") != "reset":
+            raise HTTPException(status_code=400, detail="Invalid token")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+
+    new_hash = get_password_hash(req.new_password)
+    if not await reset_password_with_token(req.token, new_hash):
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+    return {"message": "Password has been reset"}
+
+# Admin-only dependencies
+def assert_admin(current_user: dict):
+    if not current_user.get("is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    return True
+
+@app.get("/admin/users")
+async def admin_list_users(limit: int = 100, current_user: dict = Depends(get_current_user)):
+    assert_admin(current_user)
+    return await list_users(limit)
+
+@app.get("/admin/recordings")
+async def admin_list_recordings(limit: int = 100, current_user: dict = Depends(get_current_user)):
+    assert_admin(current_user)
+    return await list_recent_recordings(limit)
+
+@app.get("/admin/metrics/summary")
+async def admin_metrics_summary(current_user: dict = Depends(get_current_user)):
+    assert_admin(current_user)
+    return await get_usage_metrics()
 
 @app.post("/token", response_model=Token)
 async def login_endpoint(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -332,7 +499,10 @@ def convert_objectid_to_str(obj):
 async def get_user_progress_endpoint(current_user: dict = Depends(get_current_user)):
     try:
         print("DEBUG: /user/progress endpoint called")
-        user_id = ObjectId(current_user["_id"])
+        # Handle _id as either str or ObjectId
+        user_id = current_user.get("_id")
+        if not isinstance(user_id, ObjectId):
+            user_id = ObjectId(user_id)
         recordings_list = await get_user_recordings(user_id)
 
         if not recordings_list:
@@ -371,7 +541,11 @@ async def get_user_progress_endpoint(current_user: dict = Depends(get_current_us
             badges_earned=[]
         )
 
-        await update_progress_metrics(metrics_data)
+        # Persist metrics but do not fail the request if DB write fails
+        try:
+            await update_progress_metrics(metrics_data)
+        except Exception as persist_error:
+            logger.warning(f"Failed to persist progress metrics: {persist_error}")
 
         # Convert ObjectId to string in the response
         response_data = {

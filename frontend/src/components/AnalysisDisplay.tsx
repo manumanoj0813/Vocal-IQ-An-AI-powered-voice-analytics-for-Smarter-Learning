@@ -46,6 +46,7 @@ import {
   Radar,
 } from 'recharts';
 import api from '../config/api';
+import { MetricInfoButton } from './MetricInfoButton';
 
 interface AnalysisDisplayProps {
   analysis: any; // Consider defining a more specific type for analysis
@@ -238,6 +239,7 @@ export const AnalysisDisplay: React.FC<AnalysisDisplayProps> = ({ analysis }) =>
             Voice Analysis Results
           </Text>
           <HStack spacing={3}>
+            <MetricInfoButton analysis={analysis} />
             <Button
               leftIcon={<FaDownload />}
               colorScheme="purple"

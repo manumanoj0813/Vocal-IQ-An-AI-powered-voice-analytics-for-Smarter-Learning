@@ -16,9 +16,9 @@ const axiosConfig: any = {
     'Expires': '0',
   },
   withCredentials: true, // Send cookies with requests
-  timeout: 60000, // Increased to 60 seconds for audio processing
-  maxContentLength: 100 * 1024 * 1024, // 100MB max content length
-  maxBodyLength: 100 * 1024 * 1024, // 100MB max body length
+  timeout: 900000, // 15 minutes to allow long recordings/uploads
+  maxContentLength: 500 * 1024 * 1024, // 500MB max content length
+  maxBodyLength: 500 * 1024 * 1024, // 500MB max body length
 };
 
 const api = axios.create(axiosConfig);

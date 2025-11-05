@@ -25,6 +25,7 @@ import {
 import { FaMicrophone, FaChartLine, FaLightbulb, FaStar, FaDownload } from 'react-icons/fa';
 import { VoiceAnalysis } from '../types';
 import api from '../config/api';
+import { MetricInfoButton } from './MetricInfoButton';
 
 interface EnhancedAnalysisDisplayProps {
   analysis: VoiceAnalysis;
@@ -115,6 +116,7 @@ export const EnhancedAnalysisDisplay: React.FC<EnhancedAnalysisDisplayProps> = (
               Analysis Confidence
             </Heading>
             <HStack spacing={3}>
+              <MetricInfoButton analysis={analysis} />
               <Button
                 leftIcon={<FaDownload />}
                 colorScheme="purple"

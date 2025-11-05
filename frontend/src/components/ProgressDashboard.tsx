@@ -29,6 +29,7 @@ import { UserProgress, PracticeSession } from '../types';
 export const ProgressDashboard: React.FC = () => {
   const [progress, setProgress] = useState<UserProgress | null>(null);
   const [sessions, setSessions] = useState<PracticeSession[]>([]);
+  const [recordings, setRecordings] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const toast = useToast();
 
@@ -40,13 +41,15 @@ export const ProgressDashboard: React.FC = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [progressRes, sessionsRes] = await Promise.all([
+        const [progressRes, sessionsRes, recordingsRes] = await Promise.all([
           api.get<UserProgress>('/user/progress'),
           api.get<PracticeSession[]>('/practice-sessions'),
+          api.get('/user/recordings'),
         ]);
 
         setProgress(progressRes.data);
         setSessions(sessionsRes.data);
+        setRecordings(recordingsRes.data?.recordings || []);
       } catch (error) {
         console.error('Error fetching progress data:', error);
         toast({
@@ -72,15 +75,19 @@ export const ProgressDashboard: React.FC = () => {
     );
   }
 
-  if (!progress || !progress.latest_metrics) {
-    return (
-      <Box p={8} textAlign="center">
-        <Text>No progress data available yet. Start practicing to see your improvements!</Text>
-      </Box>
-    );
-  }
-
-  const metrics = progress.latest_metrics;
+  const metrics = progress?.latest_metrics || {
+    clarity_trend: 0,
+    confidence_trend: 0,
+    speech_rate_trend: 0,
+    emotion_expression_score: 0,
+    vocabulary_score: 0,
+    overall_improvement: 0,
+    current_goals: [],
+    completed_goals: [],
+    badges_earned: [],
+    user_id: '',
+    metric_date: new Date().toISOString(),
+  } as any;
   
   const trendData = [
     {
@@ -103,6 +110,13 @@ export const ProgressDashboard: React.FC = () => {
         <Heading size="lg" color="purple.600">
           Your Voice Analytics Progress
         </Heading>
+        {!progress?.latest_metrics && (
+          <Box p={4} borderRadius="md" bg={cardBg} border="1px solid" borderColor={borderColor}>
+            <Text color={textColor}>
+              No progress metrics yet. Record or upload an audio in Quick/Enhanced Analysis to generate your first metrics.
+            </Text>
+          </Box>
+        )}
 
         <SimpleGrid columns={[1, 2, 3]} spacing={6}>
           <Box p={4} borderRadius="md" bg={cardBg} border="1px solid" borderColor={borderColor}>
@@ -125,7 +139,7 @@ export const ProgressDashboard: React.FC = () => {
               Total Recordings
             </Text>
             <Text fontSize="3xl" fontWeight="bold" color="purple.500">
-              {progress.total_recordings || 0}
+              {progress?.total_recordings || recordings.length || 0}
             </Text>
           </Box>
 
@@ -215,6 +229,35 @@ export const ProgressDashboard: React.FC = () => {
                 </VStack>
               </Box>
             ))}
+          </Grid>
+        </Box>
+
+        <Box>
+          <Text fontSize="lg" fontWeight="semibold" mb={4}>
+            Recent Recordings
+          </Text>
+          <Grid templateColumns={['1fr', '1fr', 'repeat(2, 1fr)']} gap={4}>
+            {(recordings || []).slice(0, 4).map((r: any) => (
+              <Box
+                key={r.id || r._id}
+                p={4}
+                borderRadius="md"
+                bg={cardBg}
+                border="1px"
+                borderColor={borderColor}
+              >
+                <VStack align="start" spacing={2}>
+                  <Badge colorScheme="purple">{r.session_type}</Badge>
+                  <Text fontWeight="semibold">{r.topic}</Text>
+                  <Text fontSize="sm" color={textColor}>
+                    {r.created_at ? new Date(r.created_at).toLocaleString() : ''}
+                  </Text>
+                </VStack>
+              </Box>
+            ))}
+            {(!recordings || recordings.length === 0) && (
+              <Text color={textColor}>No recordings yet.</Text>
+            )}
           </Grid>
         </Box>
 

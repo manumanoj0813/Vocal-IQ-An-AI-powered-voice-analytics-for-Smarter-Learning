@@ -55,6 +55,7 @@ import { PracticeSession } from './components/PracticeSession';
 import { EnhancedAnalysis } from './components/EnhancedAnalysis';
 import { ComparisonCharts } from './components/ComparisonCharts';
 import { DataExport } from './components/DataExport';
+import { AdminDashboard } from './components/AdminDashboard';
 import { LanguageSettings } from './components/LanguageSettings';
 import { LoginForm } from './components/LoginForm';
 import { ThemeToggle } from './components/ThemeToggle';
@@ -491,6 +492,26 @@ const MainContent: React.FC = () => {
                       <Text display={isMobile ? "none" : "block"}>Languages</Text>
                     </HStack>
                   </Tab>
+                  {user?.is_admin && (
+                  <Tab 
+                    _selected={{ 
+                      bg: "purple.500", 
+                      color: "white",
+                      transform: "translateY(-2px)",
+                      boxShadow: "0 4px 12px rgba(128, 90, 213, 0.3)"
+                    }}
+                    _hover={{ bg: "purple.100" }}
+                    transition="all 0.2s"
+                    borderRadius="lg"
+                    mx={1}
+                    mb={2}
+                  >
+                    <HStack spacing={2}>
+                      <Icon as={FaCrown} />
+                      <Text display={isMobile ? "none" : "block"}>Admin</Text>
+                    </HStack>
+                  </Tab>
+                  )}
           </TabList>
 
                 <TabPanels p={6}>
@@ -561,6 +582,14 @@ const MainContent: React.FC = () => {
               <LanguageSettings />
                     </Fade>
             </TabPanel>
+
+            {user?.is_admin && (
+              <TabPanel>
+                <Fade in={activeTab === 7} delay={0.1}>
+                  <AdminDashboard />
+                </Fade>
+              </TabPanel>
+            )}
           </TabPanels>
         </Tabs>
             </Box>
